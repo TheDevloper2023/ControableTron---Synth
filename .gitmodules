@@ -1,0 +1,3 @@
+[submodule "mellotron"]
+	path = mellotron
+	url = https://github.com/NVIDIA/mellotron.git
