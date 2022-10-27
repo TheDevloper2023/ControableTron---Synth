@@ -127,3 +127,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Model directories and files
+resources/*
+!resources/README.md
