@@ -21,7 +21,7 @@ from typing import Optional, Tuple
 def load_tts(
         tts_model_checkpoint_path: str,
         device: Optional[torch.device] = None,
-) -> Tuple[Tacotron2, object]:
+) -> Tuple[Mellotron, object]:
     # See:
     # https://github.com/NVIDIA/mellotron/blob/master/inference.ipynb
     device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
