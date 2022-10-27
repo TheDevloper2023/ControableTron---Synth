@@ -1,3 +1,4 @@
+import torch
 import tensorflow as tf
 from text.symbols import symbols
 
@@ -28,6 +29,7 @@ def create_hparams(hparams_string=None, verbose=False):
         cudnn_enabled=True,
         cudnn_benchmark=False,
         ignore_layers=['speaker_embedding.weight'],
+        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
 
         ################################
         # Data Parameters             #
