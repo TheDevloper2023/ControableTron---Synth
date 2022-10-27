@@ -92,7 +92,7 @@ def _get_mel_spec(
     audio_norm = audio / hparams.max_wav_value if audio.max() > 1.0 or audio.min() < -1.0 else audio
     audio_norm = audio_norm.unsqueeze(0)
     # Compute Mel spectrogram using utility layer
-    mel_spec = stft.mel_spectrogram(audio_norm)
+    mel_spec = stft.mel_spectrogram(audio_norm).squeeze()
     mel_spec = mel_spec.to(device)
 
     return mel_spec
@@ -192,21 +192,21 @@ def encode_input(
     data_collate = TextMelCollate(1)
 
     # Encode text
-    text = torch.LongTensor(text_to_sequence(text, hparams.text_cleaners, arpabet_dict), device=device)[None, :]
+    text = torch.LongTensor(text_to_sequence(text, hparams.text_cleaners, arpabet_dict), device=device)
 
     # Encode audio
     audio, _ = librosa.core.load(reference_audio_path, sr=hparams.sampling_rate)
     # Compute Reference audio Mel spectrogram
     mel_spec = _get_mel_spec(stft, hparams, audio=audio, device=device)
     # Compute pitch contour
-    f0 = _get_f0(hparams, audio=audio, mel_spec=mel_spec.squeeze().cpu().numpy(), device=device)
+    f0 = _get_f0(hparams, audio=audio, mel_spec=mel_spec.cpu().numpy(), device=device)
     # Encode speaker ID
     # If speaker ID is none sample one randomly from model
     if speaker_id is None:
         speaker_id = random.randint(0, mellotron.speaker_embedding.num_embeddings)
-    speaker_id = torch.LongTensor([speaker_id], device=device)
+    speaker_id = torch.tensor(speaker_id, device=device)
 
-    (text, style_input, speaker_ids, f0s), _ = mellotron.parse_batch(data_collate([(text, mel_spec, speaker_id, f0)]))
+    (text, _, style_input, _, _, speaker_ids, f0s), _ = mellotron.parse_batch(data_collate([(text, mel_spec, speaker_id, f0)]))
 
     return text, style_input, speaker_ids, f0s
 
@@ -218,11 +218,11 @@ def _plot_mel_f0_alignment(
     # https://github.com/NVIDIA/mellotron/blob/master/inference.ipynb
     fig, axes = plt.subplots(4, 1, figsize=figsize)
     axes = axes.flatten()
-    axes[0].imshow(mel_source, aspect='auto', origin='bottom', interpolation='none')
-    axes[1].imshow(mel_outputs_postnet, aspect='auto', origin='bottom', interpolation='none')
+    axes[0].imshow(mel_source, aspect='auto', origin='lower', interpolation='none')
+    axes[1].imshow(mel_outputs_postnet, aspect='auto', origin='lower', interpolation='none')
     axes[2].scatter(range(len(f0s)), f0s, alpha=0.5, color='red', marker='.', s=1)
     axes[2].set_xlim(0, len(f0s))
-    axes[3].imshow(alignments, aspect='auto', origin='bottom', interpolation='none')
+    axes[3].imshow(alignments, aspect='auto', origin='lower', interpolation='none')
     axes[0].set_title("Source Mel")
     axes[1].set_title("Predicted Mel")
     axes[2].set_title("Source pitch contour")
@@ -261,22 +261,22 @@ def synthesise_speech(
     encoded_input = (text, gst_style if gst_style is not None else style_input, speaker_ids, f0s)
 
     # In this case I only need to use the base Tacotron 2 for inference (Mellotron is not necessary)
-    mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = mellotron.infer(encoded_input)
+    mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = mellotron.inference(encoded_input)
 
     # Use vocoder to generate the raw audio signal
     audio = denoiser(waveglow.infer(mel_outputs_postnet, sigma=0.8), 0.01)[:, 0]
 
     # Save waveform to file if path is provided
     if out_path is not None:
-        write(out_path, hparams.sampling_rate, audio)
+        write(out_path, hparams.sampling_rate, audio.cpu().numpy()[0])
 
     # Plot generated Mel Spectrogram
     if plot:
         _plot_mel_f0_alignment(
-            encoded_input[2].data.cpu().numpy()[0],
+            encoded_input[1].data.cpu().numpy()[0],
             mel_outputs_postnet.data.cpu().numpy()[0],
             encoded_input[-1].data.cpu().numpy()[0, 0],
-            rhythm.data.cpu().numpy()[:, 0].T,
+            rhythm.data.cpu().numpy()[0].T,
             output_path=plot_path
         )
 
