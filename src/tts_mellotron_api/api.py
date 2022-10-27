@@ -8,7 +8,7 @@ import librosa
 import torch
 
 from mellotron.hparams import create_hparams
-from mellotron.model import Tacotron2, load_model
+from mellotron.model import Tacotron2 as Mellotron, load_model
 from mellotron.waveglow.denoiser import Denoiser
 from mellotron.layers import TacotronSTFT
 from mellotron.data_utils import TextMelCollate
@@ -127,7 +127,7 @@ def _get_f0(
 @torch.no_grad()
 def get_prosody_embedding(
         reference_audio_path: str,
-        mellotron: Tacotron2,
+        mellotron: Mellotron,
         hparams,
         device: Optional[torch.device] = None
 ) ->torch.FloatTensor:
@@ -144,7 +144,7 @@ def get_prosody_embedding(
 @torch.no_grad()
 def get_gst(
         reference_audio_path: str,
-        mellotron: Tacotron2,
+        mellotron: Mellotron,
         hparams,
         device: Optional[torch.device] = None
 ) -> torch.FloatTensor:
@@ -160,7 +160,7 @@ def encode_input(
         text: str,
         reference_audio_path: str,
         arpabet_dict,
-        mellotron: Tacotron2,
+        mellotron: Mellotron,
         hparams,
         speaker_id: Optional[int] = None,
         device: Optional[torch.device] = None
@@ -213,7 +213,7 @@ def _plot_mel_f0_alignment(
 def synthesise_speech(
         text: str,
         reference_audio_path: str,
-        mellotron: Tacotron2,
+        mellotron: Mellotron,
         hparams,
         waveglow,
         denoiser: Denoiser,
