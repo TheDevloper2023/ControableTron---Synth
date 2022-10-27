@@ -1,6 +1,5 @@
 from matplotlib import pyplot as plt
 
-
 import numpy as np
 import random
 from scipy.io.wavfile import write
@@ -8,7 +7,7 @@ import librosa
 import torch
 
 from mellotron.hparams import create_hparams, AttrDict
-from mellotron.model import Tacotron2 as Mellotron
+from mellotron.model import Tacotron2 as Mellotron, load_model
 from mellotron.layers import TacotronSTFT as MellotronSTFT
 from waveglow.glow import WaveGlow
 from waveglow.denoiser import Denoiser
@@ -16,7 +15,7 @@ from mellotron.data_utils import TextMelCollate
 from mellotron.text import cmudict, text_to_sequence
 from mellotron.yin import compute_yin
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 
 
 def load_tts(
@@ -39,7 +38,7 @@ def load_tts(
         hparams.mel_fmax
     )
     # Create Mellotron TTS instance and load weights
-    mellotron: Mellotron = Mellotron(hparams).to(device).eval()
+    mellotron: Mellotron = load_model(hparams).eval()
     mellotron.load_state_dict(torch.load(tts_model_checkpoint_path, map_location=device)['state_dict'])
 
     return mellotron, stft, hparams
@@ -244,7 +243,11 @@ def synthesise_speech(
         denoiser: Denoiser,
         arpabet_dict,
         speaker_id: Optional[int] = None,
-        gst_style: Optional[int] = None,
+        gst_style_id: Optional[int] = None,
+        gst_style_scores: Optional[List[float]] = None,
+        gst_head_style_scores: Optional[List[List[float]]] = None,
+        gst_style_embedding: Optional[List[float]] = None,
+        prosody_embedding: Optional[List[float]] = None,
         device: Optional[torch.device] = None,
         out_path: Optional[str] = None,
         plot: bool = False,
@@ -258,10 +261,23 @@ def synthesise_speech(
     text, style_input, speaker_ids, f0s = encode_input(
         text, reference_audio_path, arpabet_dict, mellotron, stft, hparams, speaker_id=speaker_id, device=device
     )
-    encoded_input = (text, gst_style if gst_style is not None else style_input, speaker_ids, f0s)
+    if gst_style_id is not None:
+        encoded_input = (text, gst_style_id, speaker_ids, f0s)
+    elif gst_style_scores is not None:
+        encoded_input = (text, torch.tensor(gst_style_scores, device=device).unsqueeze(0), speaker_ids, f0s)
+    elif gst_head_style_scores is not None:
+        encoded_input = (text, torch.tensor(gst_style_scores, device=device).unsqueeze(1).unsqueeze(1), speaker_ids, f0s)
+    elif gst_style_embedding is not None:
+        encoded_input = (text, torch.tensor(gst_style_embedding, device=device).unsqueeze(0), speaker_ids, f0s)
+    elif prosody_embedding is not None:
+        encoded_input = (text, torch.tensor(prosody_embedding, device=device).unsqueeze(0), speaker_ids, f0s)
+    else:
+        encoded_input = (text, style_input, speaker_ids, f0s)
 
     # In this case I only need to use the base Tacotron 2 for inference (Mellotron is not necessary)
     mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = mellotron.inference(encoded_input)
+
+    # TODO add rhythm based post processing to resample the pitch (call function recursively after scaling)
 
     # Use vocoder to generate the raw audio signal
     audio = denoiser(waveglow.infer(mel_outputs_postnet, sigma=0.8), 0.01)[:, 0]
@@ -273,7 +289,8 @@ def synthesise_speech(
     # Plot generated Mel Spectrogram
     if plot:
         _plot_mel_f0_alignment(
-            encoded_input[1].data.cpu().numpy()[0],
+            style_input.data.cpu().numpy()[0],
+            # encoded_input[1].data.cpu().numpy()[0],
             mel_outputs_postnet.data.cpu().numpy()[0],
             encoded_input[-1].data.cpu().numpy()[0, 0],
             rhythm.data.cpu().numpy()[0].T,
