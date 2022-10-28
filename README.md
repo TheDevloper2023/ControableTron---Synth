@@ -35,14 +35,19 @@ pip install jamo
 # Mellotron
 git submodule init; git submodule update
 # WaveGlow inside Mellotron
-cd mellotron/
+cd mellotron
 git submodule init; git submodule update
-cd ..
+# Tacotron 2 inside WaveGlow
+cd waveglow
+git submodule init; git submodule update
+# Go back to main directory
+cd ../..
 # Update code using old TensorFlow version with now deprecated interfaces
-cp tmp/updated_hparams.py mellotron/hparams.py
+cp tmp/updated_mellotron_hparams.py mellotron/hparams.py
 cp tmp/updated_mellotron_model.py mellotron/model.py
 cp tmp/updated_denoiser.py mellotron/waveglow/denoiser.py
 cp tmp/updated_glow.py mellotron/waveglow/glow.py
+cp tmp/updated_tacotron2_hparams.py mellotron/waveglow/tacotron2/hparams.py
 ```
 
 To add the directories to the Python path, you can add these lines to the file `~/.bashrc`
@@ -51,6 +56,7 @@ To add the directories to the Python path, you can add these lines to the file `
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/src
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/mellotron
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/mellotron/waveglow
+export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/mellotron/waveglow/tacotron2
 ```
 
 ## Example
