@@ -13,7 +13,7 @@ This repository is organised into two main directories:
     - directory to host the WaveGlow model.
 - `src/mellotron_api` package with the api.
 - `mellotron/` submodule with Mellotron, WaveGlow, and Tacotron 2 code.
-- `tmp` contains temporary replacement files to have the code work properly (see environment section).
+- `tmp/` contains temporary replacement files to have the code work properly (see environment section).
 
 For further details on the available models, refer to the `README.md` in the `resources/` directory.
 
