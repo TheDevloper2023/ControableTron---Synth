@@ -5,43 +5,88 @@ import random
 from scipy.io.wavfile import write
 import librosa
 import torch
+from enum import Enum
 
-from mellotron.hparams import create_hparams, AttrDict
-from mellotron.model import Tacotron2 as Mellotron, load_model
+# Mellotron
+from mellotron.hparams import create_hparams as create_mellotron_haprams, AttrDict as MellotronAttrDict
+from mellotron.model import Tacotron2 as Mellotron, load_model as load_mellotron_model
 from mellotron.layers import TacotronSTFT as MellotronSTFT
+from mellotron.data_utils import TextMelCollate
+from mellotron.text import cmudict, text_to_sequence as text_to_sequence_mellotron
+from mellotron.yin import compute_yin
+# WaveGlow
 from waveglow.glow import WaveGlow
 from waveglow.denoiser import Denoiser
-from mellotron.data_utils import TextMelCollate
-from mellotron.text import cmudict, text_to_sequence
-from mellotron.yin import compute_yin
+# Tacotron 2
+from tacotron2.hparams import create_hparams as create_tacotron2_haprams, AttrDict as Tacotron2AttrDict
+from tacotron2.model import Tacotron2
+from tacotron2.train import load_model as load_tacotron2_model
+from tacotron2.layers import TacotronSTFT
+from tacotron2.text import text_to_sequence as text_to_sequence_tacotron2
+from tacotron2.audio_processing import griffin_lim
 
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Union, Literal
 
 
-def load_tts(
-        tts_model_checkpoint_path: str,
-        device: Optional[torch.device] = None,
-) -> Tuple[Mellotron, MellotronSTFT, AttrDict]:
+def _load_mellotron(
+        tts_model_checkpoint_path: str, device: Optional[torch.device] = None
+) -> Tuple[Mellotron, MellotronSTFT, MellotronAttrDict]:
     # See:
     # https://github.com/NVIDIA/mellotron/blob/master/inference.ipynb
     device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # Load hyper-parameters
-    hparams: AttrDict = create_hparams()
+    hparams: MellotronAttrDict = create_mellotron_haprams()
     # Create STFT PyTorch layer
     stft = MellotronSTFT(
-        hparams.filter_length,
-        hparams.hop_length,
-        hparams.win_length,
-        hparams.n_mel_channels,
-        hparams.sampling_rate,
-        hparams.mel_fmin,
-        hparams.mel_fmax
+        filter_length=hparams.filter_length,
+        hop_length=hparams.hop_length,
+        win_length=hparams.win_length,
+        n_mel_channels=hparams.n_mel_channels,
+        sampling_rate=hparams.sampling_rate,
+        mel_fmin=hparams.mel_fmin,
+        mel_fmax=hparams.mel_fmax
     )
     # Create Mellotron TTS instance and load weights
-    mellotron: Mellotron = load_model(hparams).eval()
+    mellotron: Mellotron = load_mellotron_model(hparams).eval()
     mellotron.load_state_dict(torch.load(tts_model_checkpoint_path, map_location=device)['state_dict'])
 
     return mellotron, stft, hparams
+
+
+def _load_tacotron2(
+        tts_model_checkpoint_path: str, device: Optional[torch.device] = None
+) -> Tuple[Tacotron2, TacotronSTFT, Tacotron2AttrDict]:
+    # See:
+    # https://github.com/NVIDIA/tacotron2/blob/master/inference.ipynb
+    device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Load hyper-parameters
+    hparams: Tacotron2AttrDict = create_tacotron2_haprams()
+    # Create STFT PyTorch layer
+    stft = TacotronSTFT(
+        filter_length=hparams.filter_length,
+        hop_length=hparams.hop_length,
+        win_length=hparams.win_length,
+        sampling_rate=hparams.sampling_rate
+    )
+    # Create Tacotron 2 TTS instance and load weights
+    tacotron2: Tacotron2 = load_tacotron2_model(hparams)
+    tacotron2.model.load_state_dict(torch.load(tts_model_checkpoint_path, map_location=device)['state_dict']).eval()
+
+    return tacotron2, stft, hparams
+
+
+def load_tts(
+        tts_model_checkpoint_path: str,
+        model: Literal['mellotron', 'tacotron2'] = 'mellotron',
+        device: Optional[torch.device] = None
+) -> Union[Tuple[Mellotron, MellotronSTFT, MellotronAttrDict], Tuple[Tacotron2, TacotronSTFT, Tacotron2AttrDict]]:
+    # Forward  call to proper TTS loader
+    if model == 'mellotron':
+        return _load_mellotron(tts_model_checkpoint_path, device=device)
+    elif model == 'tacotron2':
+        return _load_tacotron2(tts_model_checkpoint_path, device=device)
+    else:
+        raise ValueError(f'Unsupported model type: {model}')
 
 
 def load_vocoder(
@@ -69,7 +114,7 @@ def load_arpabet_dict(dict_path: str):
 
 def _get_mel_spec(
         stft: MellotronSTFT,
-        hparams: AttrDict,
+        hparams: MellotronAttrDict,
         audio_path: Optional[str] = None,
         audio: Optional[np.ndarray] = None,
         device: Optional[torch.device] = None
@@ -98,7 +143,7 @@ def _get_mel_spec(
 
 
 def _get_f0(
-        hparams: AttrDict,
+        hparams: MellotronAttrDict,
         audio_path: Optional[str] = None,
         audio: Optional[np.ndarray] = None,
         stft: Optional[MellotronSTFT] = None,
@@ -141,18 +186,61 @@ def _get_f0(
     return f0
 
 
+def _get_speaker_id(
+        speaker_id: Optional[int] = None, n_speakers: Optional[int] = None, device: Optional[torch.device] = None
+) -> torch.tensor:
+    device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # If speaker ID is none sample one randomly from model
+    if speaker_id is None:
+        speaker_id = random.randint(0, n_speakers)
+    speaker_id = torch.tensor(speaker_id, device=device)
+
+    return speaker_id
+
+
+def _get_style_input(
+        style_input: torch.tensor,
+        gst_style_id: Optional[int] = None,
+        gst_style_scores: Optional[List[float]] = None,
+        gst_head_style_scores: Optional[List[List[float]]] = None,
+        gst_style_embedding: Optional[List[float]] = None,
+        prosody_embedding: Optional[List[float]] = None,
+        device: Optional[torch.device] = None
+) -> torch.tensor:
+    device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Select style control approach
+    if gst_style_id is not None:
+        return gst_style_id
+    elif gst_style_scores is not None:
+        return torch.tensor(gst_style_scores, device=device).unsqueeze(0)
+    elif gst_head_style_scores is not None:
+        return torch.tensor(gst_style_scores, device=device).unsqueeze(1).unsqueeze(1)
+    elif gst_style_embedding is not None:
+        return torch.tensor(gst_style_embedding, device=device).unsqueeze(0)
+    elif prosody_embedding is not None:
+        return torch.tensor(prosody_embedding, device=device).unsqueeze(0)
+    else:
+        return style_input
+
+
+def _resample_f0():
+    raise NotImplementedError()
+
+
 @torch.no_grad()
 def get_prosody_embedding(
         reference_audio_path: str,
         mellotron: Mellotron,
         stft: MellotronSTFT,
-        hparams: AttrDict,
+        hparams: MellotronAttrDict,
         device: Optional[torch.device] = None
 ) ->torch.FloatTensor:
     device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load Mel spectrogram
-    mel_spec = _get_mel_spec(reference_audio_path, stft, hparams, device=device)
+    mel_spec = _get_mel_spec(stft, hparams, audio_path=reference_audio_path, device=device)
     # Compute prosody embedding via reference encoder
     prosody_embedding = mellotron.gst.encoder(mel_spec)
 
@@ -164,25 +252,36 @@ def get_gst(
         reference_audio_path: str,
         mellotron: Mellotron,
         stft: MellotronSTFT,
-        hparams: AttrDict,
+        hparams: MellotronAttrDict,
         device: Optional[torch.device] = None
 ) -> torch.FloatTensor:
     device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load Mel spectrogram
-    mel_spec = _get_mel_spec(reference_audio_path, stft, hparams, device=device)
+    mel_spec = _get_mel_spec(stft, hparams, audio_path=reference_audio_path, device=device)
 
     ...
+    # TODO complete
 
 
-def encode_input(
+def _encode_input_mellotron(
         text: str,
-        reference_audio_path: str,
         arpabet_dict,
         mellotron: Mellotron,
         stft: MellotronSTFT,
-        hparams: AttrDict,
+        hparams: MellotronAttrDict,
+        reference_audio_path: Optional[str] = None,
+        tacotron2: Optional[Tacotron2] = None,
+        tacotron2_stft: Optional[TacotronSTFT] = None,
+        tacotron2_hparams: Optional[Tacotron2AttrDict] = None,
+        waveglow: Optional[WaveGlow] = None,
+        denoiser: Optional[Denoiser] = None,
         speaker_id: Optional[int] = None,
+        gst_style_id: Optional[int] = None,
+        gst_style_scores: Optional[List[float]] = None,
+        gst_head_style_scores: Optional[List[List[float]]] = None,
+        gst_style_embedding: Optional[List[float]] = None,
+        prosody_embedding: Optional[List[float]] = None,
         device: Optional[torch.device] = None
 ) -> Tuple[torch.LongTensor, torch.FloatTensor, torch.LongTensor, torch.FloatTensor]:
     device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -191,23 +290,46 @@ def encode_input(
     data_collate = TextMelCollate(1)
 
     # Encode text
-    text = torch.LongTensor(text_to_sequence(text, hparams.text_cleaners, arpabet_dict), device=device)
+    text_ids = torch.LongTensor(text_to_sequence_mellotron(text, hparams.text_cleaners, arpabet_dict), device=device)
 
-    # Encode audio
-    audio, _ = librosa.core.load(reference_audio_path, sr=hparams.sampling_rate)
-    # Compute Reference audio Mel spectrogram
-    mel_spec = _get_mel_spec(stft, hparams, audio=audio, device=device)
+    # Encode acoustic features
+    # Extract acoustic features from reference audio if provided
+    if reference_audio_path is not None:
+        # Encode audio
+        audio, _ = librosa.core.load(reference_audio_path, sr=hparams.sampling_rate)
+        # Compute Reference audio Mel spectrogram
+        mel_spec = _get_mel_spec(stft, hparams, audio=audio, device=device)
+    # Synthesise speech from Tacotron 2 if reference is not provided
+    else:
+        # Generate mel spectrogram
+        _, mel_spec, _, _ = _synthesise_speech_tacotron2(text, tacotron2, tacotron2_hparams, device)
+        # Use vocoder or Griffin-Limm algorithm to reconstruct original audio
+        audio = _synthesise_raw_audio(mel_spec, waveglow=waveglow, denoiser=denoiser, stft=tacotron2_stft)
     # Compute pitch contour
     f0 = _get_f0(hparams, audio=audio, mel_spec=mel_spec.cpu().numpy(), device=device)
+
     # Encode speaker ID
-    # If speaker ID is none sample one randomly from model
-    if speaker_id is None:
-        speaker_id = random.randint(0, mellotron.speaker_embedding.num_embeddings)
-    speaker_id = torch.tensor(speaker_id, device=device)
+    speaker_id = _get_speaker_id(
+        speaker_id=speaker_id, n_speakers=mellotron.speaker_embedding.num_embeddings, device=device
+    )
 
-    (text, _, style_input, _, _, speaker_ids, f0s), _ = mellotron.parse_batch(data_collate([(text, mel_spec, speaker_id, f0)]))
+    # Apply collate function
+    (text_ids, _, style_input, _, _, speaker_ids, f0s), _ = mellotron.parse_batch(
+        data_collate([(text_ids, mel_spec, speaker_id, f0)])
+    )
 
-    return text, style_input, speaker_ids, f0s
+    # Encode GST
+    style_input = _get_style_input(
+        style_input,
+        gst_style_id=gst_style_id,
+        gst_style_scores=gst_style_scores,
+        gst_head_style_scores=gst_head_style_scores,
+        gst_style_embedding=gst_style_embedding,
+        prosody_embedding=prosody_embedding,
+        device=device
+    )
+
+    return text_ids, style_input, speaker_ids, f0s
 
 
 def _plot_mel_f0_alignment(
@@ -232,69 +354,152 @@ def _plot_mel_f0_alignment(
         fig.savefig(output_path)
 
 
-@torch.no_grad()
-def synthesise_speech(
+def _synthesise_speech_mellotron(
         text: str,
-        reference_audio_path: str,
         mellotron: Mellotron,
         stft: MellotronSTFT,
-        hparams: AttrDict,
-        waveglow: WaveGlow,
-        denoiser: Denoiser,
+        hparams: MellotronAttrDict,
         arpabet_dict,
-        speaker_id: Optional[int] = None,
-        gst_style_id: Optional[int] = None,
-        gst_style_scores: Optional[List[float]] = None,
-        gst_head_style_scores: Optional[List[List[float]]] = None,
-        gst_style_embedding: Optional[List[float]] = None,
-        prosody_embedding: Optional[List[float]] = None,
-        device: Optional[torch.device] = None,
-        out_path: Optional[str] = None,
         plot: bool = False,
         plot_path: Optional[str] = None,
-) -> np.ndarray:
+        **kwargs
+) -> Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
     # See:
     # https://github.com/NVIDIA/mellotron/blob/master/inference.ipynb
-    device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Encode inputs
-    text, style_input, speaker_ids, f0s = encode_input(
-        text, reference_audio_path, arpabet_dict, mellotron, stft, hparams, speaker_id=speaker_id, device=device
-    )
-    if gst_style_id is not None:
-        encoded_input = (text, gst_style_id, speaker_ids, f0s)
-    elif gst_style_scores is not None:
-        encoded_input = (text, torch.tensor(gst_style_scores, device=device).unsqueeze(0), speaker_ids, f0s)
-    elif gst_head_style_scores is not None:
-        encoded_input = (text, torch.tensor(gst_style_scores, device=device).unsqueeze(1).unsqueeze(1), speaker_ids, f0s)
-    elif gst_style_embedding is not None:
-        encoded_input = (text, torch.tensor(gst_style_embedding, device=device).unsqueeze(0), speaker_ids, f0s)
-    elif prosody_embedding is not None:
-        encoded_input = (text, torch.tensor(prosody_embedding, device=device).unsqueeze(0), speaker_ids, f0s)
-    else:
-        encoded_input = (text, style_input, speaker_ids, f0s)
+    encoded_input = _encode_input_mellotron(text, arpabet_dict, mellotron, stft, hparams, **kwargs)
 
     # In this case I only need to use the base Tacotron 2 for inference (Mellotron is not necessary)
     mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = mellotron.inference(encoded_input)
 
     # TODO add rhythm based post processing to resample the pitch (call function recursively after scaling)
 
-    # Use vocoder to generate the raw audio signal
-    audio = denoiser(waveglow.infer(mel_outputs_postnet, sigma=0.8), 0.01)[:, 0]
+    # Plot generated Mel Spectrogram
+    if plot:
+        try:
+            _plot_mel_f0_alignment(
+                encoded_input[1].data.cpu().numpy()[0],
+                mel_outputs_postnet.data.cpu().numpy()[0],
+                encoded_input[-1].data.cpu().numpy()[0, 0],
+                rhythm.data.cpu().numpy()[0].T,
+                output_path=plot_path
+            )
+        except:  # TODO check for correct error
+            raise Warning("An error occurred while plotting, skipping...")
 
-    # Save waveform to file if path is provided
-    if out_path is not None:
-        write(out_path, hparams.sampling_rate, audio.cpu().numpy()[0])
+    return mel_outputs, mel_outputs_postnet, gate_outputs, rhythm
+
+
+def _encode_input_tacotron2(
+        text: str,
+        hparams: Tacotron2AttrDict,
+        device: Optional[torch.device] = None
+) -> torch.tensor:
+    device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Use utility function to convert input string to NumPy array
+    text_ids = np.array(text_to_sequence_tacotron2(text, hparams.text_cleaners))[None, :]
+    # Convert to PyTorch  format
+    text_ids = torch.from_numpy(text_ids).to(device).long()
+
+    return text_ids
+
+
+def _synthesise_speech_tacotron2(
+        text: str,
+        tacotron2: Tacotron2,
+        hparams: Tacotron2AttrDict,
+        device: Optional[torch.device] = None,
+        plot: bool = False,
+        plot_path: Optional[str] = None
+) -> Tuple[torch.tensor, torch.tensor, torch.tensor, torch.tensor]:
+    device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Convert input text string to PyTorch tensor
+    encoded_input = _encode_input_tacotron2(text, hparams, device=device)
+
+    # Process text input with Tacotron 2 and retrieve generated Mel spectrogram
+    mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = tacotron2.inference(encoded_input)
 
     # Plot generated Mel Spectrogram
     if plot:
-        _plot_mel_f0_alignment(
-            style_input.data.cpu().numpy()[0],
-            # encoded_input[1].data.cpu().numpy()[0],
-            mel_outputs_postnet.data.cpu().numpy()[0],
-            encoded_input[-1].data.cpu().numpy()[0, 0],
-            rhythm.data.cpu().numpy()[0].T,
-            output_path=plot_path
+        raise NotImplementedError()
+
+    return mel_outputs, mel_outputs_postnet, gate_outputs, rhythm
+
+
+def _get_spec(mel_spec: torch.tensor, stft: Union[MellotronSTFT, TacotronSTFT]):
+    # Invert Mel spectrogram into linear spectrogram
+    mel_decompress = stft.spectral_de_normalize(mel_spec)
+    mel_decompress = mel_decompress.transpose(1, 2).data.cpu()
+    spec_from_mel_scaling = 1000
+    spec_from_mel = torch.mm(mel_decompress[0], stft.mel_basis)
+    spec_from_mel = spec_from_mel.transpose(0, 1).unsqueeze(0)
+    spec_from_mel = spec_from_mel * spec_from_mel_scaling
+
+    return spec_from_mel
+
+
+def _synthesise_raw_audio(
+        mel_spec: torch.tensor,
+        waveglow: Optional[WaveGlow] = None,
+        denoiser: Optional[Denoiser] = None,
+        stft: Optional[Union[MellotronSTFT, TacotronSTFT]] = None
+) -> torch.tensor:
+    # If the vocoder is available use is to synthesise audio
+    if waveglow is not None:
+        audio = waveglow.infer(mel_spec, sigma=0.8)
+    # Else use Griffin-Limm algorithm
+    else:
+        audio = griffin_lim(_get_spec(mel_spec, stft)[:, :, :-1], stft.stft_fn, 60)
+
+    # Apply denoising if denoiser is available
+    if denoiser is not None:
+        audio = denoiser(audio, 0.01)[:, 0]
+
+    return audio
+
+
+@torch.no_grad()
+def synthesise_speech(
+        text: str,
+        tts_model: Union[Mellotron, Tacotron2],
+        hparams: Union[MellotronAttrDict, Tacotron2AttrDict],
+        stft: Optional[Union[MellotronSTFT, TacotronSTFT]] = None,
+        arpabet_dict: Optional = None,
+        waveglow: Optional[WaveGlow] = None,
+        denoiser: Optional[Denoiser] = None,
+        out_path: Optional[str] = None,
+        **kwargs
+) -> np.ndarray:
+    # Synthesise Mel spectrogram
+    if isinstance(tts_model, Mellotron):
+        mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = _synthesise_speech_mellotron(
+            text,
+            arpabet_dict,
+            tts_model,
+            stft,
+            hparams,
+            waveglow=waveglow,
+            denoiser=denoiser,
+            **kwargs
         )
+    elif isinstance(tts_model, Tacotron2):
+        mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = _synthesise_speech_tacotron2(
+            **kwargs
+        )
+    else:
+        raise ValueError(f"Unsupported TTS model: {type(tts_model)}")
+
+    # Convert Mel spectrogram into raw audio
+    audio = _synthesise_raw_audio(mel_outputs_postnet, waveglow=waveglow, denoiser=denoiser, stft=stft)
+
+    # Finally recover audio track on CPU as NumPy ndarray
+    audio = audio.cpu().numpy()[0]
+
+    # Save waveform to file if path is provided
+    if out_path is not None:
+        write(out_path, hparams.sampling_rate, audio)
 
     return audio
