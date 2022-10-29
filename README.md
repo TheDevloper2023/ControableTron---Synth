@@ -62,9 +62,13 @@ export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/tacotron2
 
 ## Examples
 
-Here follows some usage examples
+Here follows some usage examples of Tacotron 2 and Mellotron.
 
 ### Load models
+
+Start by loading the models.
+Mellotron requires also to load the ARPAbet dictionary.
+Both models can work with and without the Vocoder, in the latter case the [Griffin-Limm algorithm](https://paperswithcode.com/method/griffin-lim-algorithm) is used to generate the raw waveform from the Mel spectrogram.
 
 ```python
 from mellotron_api import load_tts, load_vocoder, load_arpabet_dict, synthesise_speech
@@ -77,6 +81,8 @@ arpabet_dict = load_arpabet_dict('mellotron/data/cmu_dictionary')
 ```
 
 ### Synthesise with Tacotron 2
+
+Tacotron 2 allows synthesising speech directly from raw text input and nothing else.
 
 ```python
 synthesise_speech(
@@ -93,7 +99,13 @@ synthesise_speech(
 
 ### Synthesise with Mellotron
 
+In this API there two available synthesis modalities for Mellotron:
+- with reference audio clip
+- without reference audio clip
+
 #### With reference audio
+
+Mellotron works using a reference audio for sythesis that provides the GST and the pitch (F0).
 
 ```python
 audio_path = 'path/to/audio.wav'
@@ -112,6 +124,8 @@ synthesise_speech(
 ```
 
 #### Without reference audio
+
+Using Tacotron 2 to generate a reference Mel Spectrogram, it is possible to use Mellotron GST and speaker conditionings without a reference audio.
 
 ```python
 synthesise_speech(
