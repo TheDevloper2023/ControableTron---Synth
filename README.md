@@ -1,7 +1,7 @@
-# Mellotron API
+# Mellotron and Tacotron 2 API
 
-API for [Mellotron](https://github.com/NVIDIA/mellotron).
-This repository contains an installation guide and some utility functions to simplify the access to the model in this library.
+API for [Mellotron](https://github.com/NVIDIA/mellotron) and [Tacotron 2](https://github.com/NVIDIA/tacotron2).
+This repository contains an installation guide and some utility functions to simplify the access to the models in the repositories.
 All credits go to the original developers.
 
 ## Repository structure
@@ -12,7 +12,8 @@ This repository is organised into two main directories:
     - directory to host the Mellotron and Tacotron 2 models;
     - directory to host the WaveGlow model.
 - `src/mellotron_api` package with the api.
-- `mellotron/` submodule with Mellotron, WaveGlow, and Tacotron 2 code.
+- `mellotron/` submodule with Mellotron and WaveGlow code.
+- `tacotron2/` submodule with Tacotron 2 code.
 - `tmp/` contains temporary replacement files to have the code work properly (see environment section).
 
 For further details on the available models, refer to the `README.md` in the `resources/` directory.
@@ -32,22 +33,21 @@ conda install -c conda-forge scipy matplotlib librosa tensorflow music21 inflect
 conda install -c anaconda nltk pillow
 pip install jamo
 # Download and initialise submodules
-# Mellotron
+# Mellotron and Tacotron 2
 git submodule init; git submodule update
 # WaveGlow inside Mellotron
 cd mellotron
 git submodule init; git submodule update
-# Tacotron 2 inside WaveGlow
-cd waveglow
-git submodule init; git submodule update
-# Go back to main directory
-cd ../..
+cd ..
 # Update code using old TensorFlow version with now deprecated interfaces
 cp tmp/updated_mellotron_hparams.py mellotron/hparams.py
 cp tmp/updated_mellotron_model.py mellotron/model.py
 cp tmp/updated_denoiser.py mellotron/waveglow/denoiser.py
 cp tmp/updated_glow.py mellotron/waveglow/glow.py
-cp tmp/updated_tacotron2_hparams.py mellotron/waveglow/tacotron2/hparams.py
+cp tmp/updated_tacotron2_train.py tacotron2/train.py
+cp tmp/updated_tacotron2_text_package.py tacotron2/text/__init__.py
+cp tmp/updated_tacotron2_hparams.py tacotron2/hparams.py
+cp tmp/updated_tacotron2_model.py tacotron2/model.py
 ```
 
 To add the directories to the Python path, you can add these lines to the file `~/.bashrc`
@@ -56,35 +56,74 @@ To add the directories to the Python path, you can add these lines to the file `
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/src
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/mellotron
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/mellotron/waveglow
-export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/mellotron/waveglow/tacotron2
+export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/tacotron2
 ```
 
-## Example
+## Examples
 
-Here follows a usage example:
+Here follows some usage examples
+
+### Load models
+
 ```python
-import torch
 from mellotron_api import load_tts, load_vocoder, load_arpabet_dict, synthesise_speech
 
 
-# Reference audio for voice (optional)
-audio_path = 'path/to/audio.wav'
-# Load model instances
-mellotron, stft, hparams = load_tts('resources/tts/mellotron/mellotron_libritts.pt')
+mellotron, mellotron_stft, mellotron_hparams = load_tts('resources/tts/mellotron/mellotron_libritts.pt')
+tacotron2, tacotron2_stft, tacotron2_hparams = load_tts('resources/tts/tacotron_2/tacotron2_statedict.pt', model='tacotron2')
 waveglow, denoiser = load_vocoder('resources/vocoder/waveglow/waveglow_256channels_universal_v4.pt')
 arpabet_dict = load_arpabet_dict('mellotron/data/cmu_dictionary')
+```
 
-# Syntehsise speech
+### Synthesise with Tacotron 2
+
+```python
 synthesise_speech(
     "I am testing a neural network for speech synthesis.", 
-    audio_path,
+    tacotron2,
+    tacotron2_hparams,
+    tacotron2_stft,
+    arpabet_dict=arpabet_dict,
+    waveglow=waveglow,
+    denoiser=denoiser,
+    out_path='path/to/output.wav'
+)
+```
+
+### Synthesise with Mellotron
+
+#### With reference audio
+
+```python
+audio_path = 'path/to/audio.wav'
+
+synthesise_speech(
+    "I am testing a neural network for speech synthesis.", 
     mellotron,
-    stft,
-    hparams,
-    waveglow,
-    denoiser,
-    arpabet_dict,
-    device=torch.device('cpu'), 
+    mellotron_hparams,
+    mellotron_stft,
+    arpabet_dict=arpabet_dict,
+    waveglow=waveglow,
+    denoiser=denoiser,
+    reference_audio_path=audio_path,
+    out_path='path/to/output.wav'
+)
+```
+
+#### Without reference audio
+
+```python
+synthesise_speech(
+    "I am testing a neural network for speech synthesis.", 
+    mellotron,
+    mellotron_hparams,
+    mellotron_stft,
+    arpabet_dict=arpabet_dict,
+    waveglow=waveglow,
+    denoiser=denoiser,
+    tacotron2=tacotron2,
+    tacotron2_stft=tacotron2_stft,
+    tacotron2_hparams=tacotron2_hparams,
     out_path='path/to/output.wav'
 )
 ```
