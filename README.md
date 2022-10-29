@@ -40,6 +40,7 @@ cd mellotron
 git submodule init; git submodule update
 cd ..
 # Update code using old TensorFlow version with now deprecated interfaces
+cp tmp/updated_mellotron_text_package.py mellotron/text/__init__.py
 cp tmp/updated_mellotron_hparams.py mellotron/hparams.py
 cp tmp/updated_mellotron_model.py mellotron/model.py
 cp tmp/updated_denoiser.py mellotron/waveglow/denoiser.py
