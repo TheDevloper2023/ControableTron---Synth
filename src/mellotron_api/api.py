@@ -70,7 +70,8 @@ def _load_tacotron2(
     )
     # Create Tacotron 2 TTS instance and load weights
     tacotron2: Tacotron2 = load_tacotron2_model(hparams)
-    tacotron2.model.load_state_dict(torch.load(tts_model_checkpoint_path, map_location=device)['state_dict']).eval()
+    tacotron2.load_state_dict(torch.load(tts_model_checkpoint_path, map_location=device)['state_dict'])
+    tacotron2.eval()
 
     return tacotron2, stft, hparams
 
@@ -477,16 +478,19 @@ def synthesise_speech(
     if isinstance(tts_model, Mellotron):
         mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = _synthesise_speech_mellotron(
             text,
-            arpabet_dict,
             tts_model,
             stft,
             hparams,
+            arpabet_dict,
             waveglow=waveglow,
             denoiser=denoiser,
             **kwargs
         )
     elif isinstance(tts_model, Tacotron2):
         mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = _synthesise_speech_tacotron2(
+            text,
+            tts_model,
+            hparams,
             **kwargs
         )
     else:
