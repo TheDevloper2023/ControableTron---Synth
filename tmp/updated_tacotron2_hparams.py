@@ -1,5 +1,6 @@
+import torch
 import tensorflow as tf
-from text import symbols
+from .text import symbols
 
 
 # See:
@@ -18,15 +19,17 @@ def create_hparams(hparams_string=None, verbose=False):
         # Experiment Parameters        #
         ################################
         epochs=500,
-        iters_per_checkpoint=500,
+        iters_per_checkpoint=1000,
         seed=1234,
         dynamic_loss_scaling=True,
         fp16_run=False,
         distributed_run=False,
         dist_backend="nccl",
-        dist_url="file://distributed.dpt",
+        dist_url="tcp://localhost:54321",
         cudnn_enabled=True,
         cudnn_benchmark=False,
+        ignore_layers=['embedding.weight'],
+        device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
 
         ################################
         # Data Parameters             #
@@ -35,7 +38,6 @@ def create_hparams(hparams_string=None, verbose=False):
         training_files='filelists/ljs_audio_text_train_filelist.txt',
         validation_files='filelists/ljs_audio_text_val_filelist.txt',
         text_cleaners=['english_cleaners'],
-        sort_by_length=False,
 
         ################################
         # Audio Parameters             #
@@ -47,7 +49,7 @@ def create_hparams(hparams_string=None, verbose=False):
         win_length=1024,
         n_mel_channels=80,
         mel_fmin=0.0,
-        mel_fmax=None,  # if None, half the sampling rate
+        mel_fmax=8000.0,
 
         ################################
         # Model Parameters             #
@@ -65,7 +67,9 @@ def create_hparams(hparams_string=None, verbose=False):
         decoder_rnn_dim=1024,
         prenet_dim=256,
         max_decoder_steps=1000,
-        gate_threshold=0.6,
+        gate_threshold=0.5,
+        p_attention_dropout=0.1,
+        p_decoder_dropout=0.1,
 
         # Attention parameters
         attention_rnn_dim=1024,
@@ -86,9 +90,9 @@ def create_hparams(hparams_string=None, verbose=False):
         use_saved_learning_rate=False,
         learning_rate=1e-3,
         weight_decay=1e-6,
-        grad_clip_thresh=1,
-        batch_size=48,
-        mask_padding=False  # set model's padded outputs to padded values
+        grad_clip_thresh=1.0,
+        batch_size=64,
+        mask_padding=True  # set model's padded outputs to padded values
     )
 
     if hparams_string:

@@ -1,6 +1,6 @@
 import torch
 import tensorflow as tf
-from text.symbols import symbols
+from .text.symbols import symbols
 
 
 # See:
