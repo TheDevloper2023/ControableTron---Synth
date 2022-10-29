@@ -69,9 +69,8 @@ def _load_tacotron2(
         sampling_rate=hparams.sampling_rate
     )
     # Create Tacotron 2 TTS instance and load weights
-    tacotron2: Tacotron2 = load_tacotron2_model(hparams)
+    tacotron2: Tacotron2 = load_tacotron2_model(hparams).eval()
     tacotron2.load_state_dict(torch.load(tts_model_checkpoint_path, map_location=device)['state_dict'])
-    tacotron2.eval()
 
     return tacotron2, stft, hparams
 
@@ -306,6 +305,9 @@ def _encode_input_mellotron(
         _, mel_spec, _, _ = _synthesise_speech_tacotron2(text, tacotron2, tacotron2_hparams, device)
         # Use vocoder or Griffin-Limm algorithm to reconstruct original audio
         audio = _synthesise_raw_audio(mel_spec, waveglow=waveglow, denoiser=denoiser, stft=tacotron2_stft)
+        #
+        mel_spec = mel_spec.squeeze(0)
+        audio = audio.squeeze(0)
     # Compute pitch contour
     f0 = _get_f0(hparams, audio=audio, mel_spec=mel_spec.cpu().numpy(), device=device)
 
