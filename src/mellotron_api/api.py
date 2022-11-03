@@ -5,14 +5,17 @@ import random
 from scipy.io.wavfile import write
 import librosa
 import torch
-from enum import Enum
 
 # Mellotron
 from mellotron.hparams import create_hparams as create_mellotron_haprams, AttrDict as MellotronAttrDict
 from mellotron.model import Tacotron2 as Mellotron, load_model as load_mellotron_model
 from mellotron.layers import TacotronSTFT as MellotronSTFT
 from mellotron.data_utils import TextMelCollate
-from mellotron.text import cmudict, text_to_sequence as text_to_sequence_mellotron
+from mellotron.text import (
+    cmudict,
+    text_to_sequence as text_to_sequence_mellotron,
+    sequence_to_text as sequence_to_text_mellotron
+)
 from mellotron.yin import compute_yin
 # WaveGlow
 from waveglow.glow import WaveGlow
@@ -193,7 +196,7 @@ def _get_speaker_id(
 
     # If speaker ID is none sample one randomly from model
     if speaker_id is None:
-        speaker_id = random.randint(0, n_speakers)
+        speaker_id = random.randint(0, n_speakers - 1)
     speaker_id = torch.tensor(speaker_id, device=device)
 
     return speaker_id
@@ -225,8 +228,18 @@ def _get_style_input(
         return style_input
 
 
-def _resample_f0():
-    raise NotImplementedError()
+def _get_length_from_alignment(alignment: np.ndarray) -> int:
+    # Compute alignment point for each time stamp
+    tmp = np.argmax(alignment, axis=1)
+    # Get points where alignment goes backwards after end
+    candidates = np.where((tmp[:-1] == alignment.shape[-1] - 1) & (tmp[:-1] > tmp[1:]))[0]
+
+    if len(candidates) > 0:
+        tgt_len = candidates[0] + 1
+    else:
+        tgt_len = -1
+
+    return tgt_len
 
 
 @torch.no_grad()
@@ -235,33 +248,92 @@ def get_prosody_embedding(
         mellotron: Mellotron,
         stft: MellotronSTFT,
         hparams: MellotronAttrDict,
-        device: Optional[torch.device] = None
-) ->torch.FloatTensor:
+        device: Optional[torch.device] = None,
+        out_format: Literal['python', 'numpy', 'pytorch'] = 'numpy'
+) -> Union[torch.tensor, np.ndarray, List[float]]:
     device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load Mel spectrogram
-    mel_spec = _get_mel_spec(stft, hparams, audio_path=reference_audio_path, device=device)
+    mel_spec = _get_mel_spec(stft, hparams, audio_path=reference_audio_path, device=device).unsqueeze(0)
     # Compute prosody embedding via reference encoder
     prosody_embedding = mellotron.gst.encoder(mel_spec)
 
-    return prosody_embedding
+    # Convert output to desired format and return
+    if out_format == 'pytorch':
+        return prosody_embedding.squeeze().cpu()
+    elif out_format == 'numpy':
+        return prosody_embedding.squeeze().cpu().numpy()
+    elif out_format == 'python':
+        return prosody_embedding.squeeze().cpu().tolist()
+    else:
+        raise ValueError(f'Unsupported output format: {out_format}')
 
 
 @torch.no_grad()
-def get_gst(
+def get_gst_scores(
         reference_audio_path: str,
         mellotron: Mellotron,
         stft: MellotronSTFT,
         hparams: MellotronAttrDict,
-        device: Optional[torch.device] = None
-) -> torch.FloatTensor:
+        device: Optional[torch.device] = None,
+        out_format: Literal['python', 'numpy', 'pytorch'] = 'numpy'
+) -> Union[torch.tensor, np.ndarray, List[float]]:
+    device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Load prosody embedding
+    prosody_embedding = get_prosody_embedding(
+        reference_audio_path, mellotron, stft, hparams, device=device, out_format='pytorch'
+    ).to(device)
+    # Prepare attention inputs
+    tgt = prosody_embedding.unsqueeze(0).unsqueeze(1)  # Used for query
+    src = torch.tanh(mellotron.gst.stl.embed).unsqueeze(0).expand(1, -1, -1)  # Used for keys and values
+    # Compute query, keys and values
+    query = mellotron.gst.stl.attention.W_query(tgt)
+    keys = mellotron.gst.stl.attention.W_key(src)
+    split_size = mellotron.gst.stl.attention.num_units // mellotron.gst.stl.attention.num_heads
+    query = torch.stack(torch.split(query, split_size, dim=2), dim=0)
+    keys = torch.stack(torch.split(keys, split_size, dim=2), dim=0)
+    # Compute the scores
+    gst_scores = torch.matmul(query, keys.transpose(2, 3))
+    gst_scores = gst_scores / (mellotron.gst.stl.attention.key_dim ** 0.5)
+    gst_scores = torch.softmax(gst_scores, dim=3)
+
+    # Convert output to desired format and return
+    if out_format == 'pytorch':
+        return gst_scores.squeeze().cpu()
+    elif out_format == 'numpy':
+        return gst_scores.squeeze().cpu().numpy()
+    elif out_format == 'python':
+        return gst_scores.squeeze().cpu().tolist()
+    else:
+        raise ValueError(f'Unsupported output format: {out_format}')
+
+
+@torch.no_grad()
+def get_gst_embeddings(
+        reference_audio_path: str,
+        mellotron: Mellotron,
+        stft: MellotronSTFT,
+        hparams: MellotronAttrDict,
+        device: Optional[torch.device] = None,
+        out_format: Literal['python', 'numpy', 'pytorch'] = 'numpy'
+) -> Union[torch.tensor, np.ndarray, List[float]]:
     device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Load Mel spectrogram
-    mel_spec = _get_mel_spec(stft, hparams, audio_path=reference_audio_path, device=device)
+    mel_spec = _get_mel_spec(stft, hparams, audio_path=reference_audio_path, device=device).unsqueeze(0)
+    # Use attention layer to compute the GST embeddings
+    gst_embeddings = mellotron.gst(mel_spec)
 
-    ...
-    # TODO complete
+    # Convert output to desired format and return
+    if out_format == 'pytorch':
+        return gst_embeddings.squeeze().cpu()
+    elif out_format == 'numpy':
+        return gst_embeddings.squeeze().cpu().numpy()
+    elif out_format == 'python':
+        return gst_embeddings.squeeze().cpu().tolist()
+    else:
+        raise ValueError(f'Unsupported output format: {out_format}')
 
 
 def _encode_input_mellotron(
@@ -282,8 +354,12 @@ def _encode_input_mellotron(
         gst_head_style_scores: Optional[List[List[float]]] = None,
         gst_style_embedding: Optional[List[float]] = None,
         prosody_embedding: Optional[List[float]] = None,
+        inference_mode: Literal['mellotron', 'tacotron2'] = 'mellotron',
         device: Optional[torch.device] = None
-) -> Tuple[torch.LongTensor, torch.FloatTensor, torch.LongTensor, torch.FloatTensor]:
+) -> Union[
+    Tuple[torch.LongTensor, torch.FloatTensor, torch.LongTensor, torch.FloatTensor],
+    Tuple[torch.LongTensor, torch.FloatTensor, torch.LongTensor, torch.FloatTensor, torch.FloatTensor]
+]:
     device = device if device is not None else torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # Create
@@ -299,13 +375,20 @@ def _encode_input_mellotron(
         audio, _ = librosa.core.load(reference_audio_path, sr=hparams.sampling_rate)
         # Compute Reference audio Mel spectrogram
         mel_spec = _get_mel_spec(stft, hparams, audio=audio, device=device)
+        # Dummy rhythm variable
+        rhythm = None
     # Synthesise speech from Tacotron 2 if reference is not provided
     else:
-        # Generate mel spectrogram
-        _, mel_spec, _, _ = _synthesise_speech_tacotron2(text, tacotron2, tacotron2_hparams, device)
+        # Generate Mel spectrogram and alignment
+        _, mel_spec, _, rhythm = _synthesise_speech_tacotron2(
+            sequence_to_text_mellotron(text_to_sequence_mellotron(text, hparams.text_cleaners, arpabet_dict)),
+            tacotron2,
+            tacotron2_hparams,
+            device
+        )
         # Use vocoder or Griffin-Limm algorithm to reconstruct original audio
         audio = _synthesise_raw_audio(mel_spec, waveglow=waveglow, denoiser=denoiser, stft=tacotron2_stft)
-        #
+        # Remove dummy batch dimension
         mel_spec = mel_spec.squeeze(0)
         audio = audio.squeeze(0)
     # Compute pitch contour
@@ -317,13 +400,13 @@ def _encode_input_mellotron(
     )
 
     # Apply collate function
-    (text_ids, _, style_input, _, _, speaker_ids, f0s), _ = mellotron.parse_batch(
+    (text_ids, text_id_lengths, mel_style_input, max_len, output_lengths, speaker_ids, f0s), _ = mellotron.parse_batch(
         data_collate([(text_ids, mel_spec, speaker_id, f0)])
     )
 
     # Encode GST
     style_input = _get_style_input(
-        style_input,
+        mel_style_input,
         gst_style_id=gst_style_id,
         gst_style_scores=gst_style_scores,
         gst_head_style_scores=gst_head_style_scores,
@@ -332,7 +415,24 @@ def _encode_input_mellotron(
         device=device
     )
 
-    return text_ids, style_input, speaker_ids, f0s
+    # Check for rhythm data in case of Mellotron inference
+    if inference_mode == 'mellotron':
+        # Generate rhythm data if not available
+        if rhythm is None:
+            # Use Mellotron's underlying Tacotron 2 model to get the alignment (rhythm)
+            *_, rhythm = mellotron.forward(
+                (text_ids, text_id_lengths, mel_style_input, max_len, output_lengths, speaker_ids, f0s)
+            )
+        rhythm = rhythm.permute(1, 0, 2)
+
+
+    # Return encoded input depending on the chosen inference mode
+    if inference_mode == 'tacotron2':  # Use underlying generative Tacotron 2 model
+        return text_ids, style_input, speaker_ids, f0s
+    elif inference_mode == 'mellotron':  # Use Mellotron model to postprocess reference spectrogram
+        return text_ids, style_input, speaker_ids, f0s, rhythm
+    else:
+        raise ValueError(f'Unsupported inference mode: {inference_mode}')
 
 
 def _plot_mel_f0_alignment(
@@ -363,6 +463,9 @@ def _synthesise_speech_mellotron(
         stft: MellotronSTFT,
         hparams: MellotronAttrDict,
         arpabet_dict,
+        inference_mode: Literal['mellotron', 'tacotron2'] = 'mellotron',
+        len_check: bool = False,
+        len_src: Literal['pitch', 'alignment'] = 'pitch',
         plot: bool = False,
         plot_path: Optional[str] = None,
         **kwargs
@@ -371,12 +474,36 @@ def _synthesise_speech_mellotron(
     # https://github.com/NVIDIA/mellotron/blob/master/inference.ipynb
 
     # Encode inputs
-    encoded_input = _encode_input_mellotron(text, arpabet_dict, mellotron, stft, hparams, **kwargs)
+    encoded_input = _encode_input_mellotron(
+        text, arpabet_dict, mellotron, stft, hparams, inference_mode=inference_mode, **kwargs
+    )
 
-    # In this case I only need to use the base Tacotron 2 for inference (Mellotron is not necessary)
-    mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = mellotron.inference(encoded_input)
+    # Generate spectrogram depending on the selected inference mode
+    if inference_mode == 'tacotron2':  # Use underlying generative Tacotron 2 model
+        mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = mellotron.inference(encoded_input)
+    elif inference_mode == 'mellotron':  # Use Mellotron model to postprocess reference spectrogram
+        mel_outputs, mel_outputs_postnet, gate_outputs, rhythm = mellotron.inference_noattention(encoded_input)
+    else:
+        raise ValueError(f'Unsupported inference mode: {inference_mode}')
 
     # TODO add rhythm based post processing to resample the pitch (call function recursively after scaling)
+    # Additional check to make sure that the output matches the length of the reference audio pitch contour
+    if len_check:
+        # Get target length
+        if len_src == 'pitch':
+            tgt_len = encoded_input[3].size(-1)
+        elif len_src == 'alignment':
+            tgt_len = _get_length_from_alignment(rhythm.cpu().squeeze(0).numpy())
+        else:
+            raise ValueError(f'Unsupported targt length source: {len_src}')
+        # Check on Mel spectrogram
+        mel_outputs = mel_outputs[:, :, :tgt_len]
+        # Check on Postnet Mel spectrogram
+        mel_outputs_postnet = mel_outputs_postnet[:, :, :tgt_len]
+        # Gate outputs
+        gate_outputs = gate_outputs[:, :tgt_len]
+        # Check on alignment (rhythm) # NOTE it may not be necessary
+        rhythm = rhythm[:, :tgt_len]
 
     # Plot generated Mel Spectrogram
     if plot:
@@ -384,7 +511,7 @@ def _synthesise_speech_mellotron(
             _plot_mel_f0_alignment(
                 encoded_input[1].data.cpu().numpy()[0],
                 mel_outputs_postnet.data.cpu().numpy()[0],
-                encoded_input[-1].data.cpu().numpy()[0, 0],
+                encoded_input[3].data.cpu().numpy()[0, 0],
                 rhythm.data.cpu().numpy()[0].T,
                 output_path=plot_path
             )
