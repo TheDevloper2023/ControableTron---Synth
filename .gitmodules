@@ -1,0 +1,6 @@
+[submodule "submodules/mellotron"]
+	path = submodules/mellotron
+	url = https://github.com/vincenzo-scotti/mellotron.git
+[submodule "submodules/tacotron2"]
+	path = submodules/tacotron2
+	url = https://github.com/vincenzo-scotti/tacotron2.git
