@@ -6,15 +6,14 @@ All credits go to the original developers.
 
 ## Repository structure
 
-This repository is organised into two main directories:
+This repository is organised into the following directories:
 
 - `resources/` contains:
     - directory to host the Mellotron and Tacotron 2 models;
     - directory to host the WaveGlow model.
 - `src/mellotron_api` package with the api.
-- `mellotron/` submodule with Mellotron and WaveGlow code.
-- `tacotron2/` submodule with Tacotron 2 code.
-- `tmp/` contains temporary replacement files to have the code work properly (see environment section).
+- `submodules/mellotron/` submodule with Mellotron and WaveGlow code.
+- `submodules/tacotron2/` submodule with Tacotron 2 code.
 
 For further details on the available models, refer to the `README.md` in the `resources/` directory.
 
@@ -28,37 +27,23 @@ conda create -n ttsmellotron python=3.10 cudatoolkit=11.3
 # Activate anaconda environment
 conda activate ttsmellotron
 # Install packages
-conda install pytorch=1.11.0 -c pytorch
-conda install -c conda-forge scipy matplotlib librosa tensorflow music21 inflect tensorboard tensorboardx unidecode
-conda install -c anaconda nltk pillow
-pip install jamo
+pip install -r requirements.txt
 # Download and initialise submodules
 # Mellotron and Tacotron 2
 git submodule init; git submodule update
 # WaveGlow inside Mellotron
-cd mellotron
+cd submodules/mellotron
 git submodule init; git submodule update
-cd ..
-# Update code using old TensorFlow version with now deprecated interfaces
-cp tmp/updated_mellotron_utils.py mellotron/utils.py
-cp tmp/updated_mellotron_text_package.py mellotron/text/__init__.py
-cp tmp/updated_mellotron_hparams.py mellotron/hparams.py
-cp tmp/updated_mellotron_model.py mellotron/model.py
-cp tmp/updated_denoiser.py mellotron/waveglow/denoiser.py
-cp tmp/updated_glow.py mellotron/waveglow/glow.py
-cp tmp/updated_tacotron2_train.py tacotron2/train.py
-cp tmp/updated_tacotron2_text_package.py tacotron2/text/__init__.py
-cp tmp/updated_tacotron2_hparams.py tacotron2/hparams.py
-cp tmp/updated_tacotron2_model.py tacotron2/model.py
+cd ../..
 ```
 
 To add the directories to the Python path, you can add these lines to the file `~/.bashrc`
 
 ```bash
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/src
-export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/mellotron
-export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/mellotron/waveglow
-export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/tacotron2
+export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/submodules/mellotron
+export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/submodules/mellotron/waveglow
+export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/submodules/tacotron2
 ```
 
 ## Examples
