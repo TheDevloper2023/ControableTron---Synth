@@ -52,6 +52,7 @@ def _load_mellotron(
     # Create Mellotron TTS instance and load weights
     mellotron: Mellotron = load_mellotron_model(hparams).eval()
     mellotron.load_state_dict(torch.load(tts_model_checkpoint_path, map_location=device)['state_dict'])
+    mellotron = mellotron.to(device)
 
     return mellotron, stft, hparams
 
@@ -74,6 +75,7 @@ def _load_tacotron2(
     # Create Tacotron 2 TTS instance and load weights
     tacotron2: Tacotron2 = load_tacotron2_model(hparams).eval()
     tacotron2.load_state_dict(torch.load(tts_model_checkpoint_path, map_location=device)['state_dict'])
+    tacotron2 = tacotron2.to(device)
 
     return tacotron2, stft, hparams
 
@@ -219,7 +221,7 @@ def _get_style_input(
     elif gst_style_scores is not None:
         return torch.tensor(gst_style_scores, device=device).unsqueeze(0)
     elif gst_head_style_scores is not None:
-        return torch.tensor(gst_style_scores, device=device).unsqueeze(1).unsqueeze(1)
+        return torch.tensor(gst_head_style_scores, device=device).unsqueeze(1).unsqueeze(1)
     elif gst_style_embedding is not None:
         return torch.tensor(gst_style_embedding, device=device).unsqueeze(0)
     elif prosody_embedding is not None:
@@ -366,8 +368,9 @@ def _encode_input_mellotron(
     data_collate = TextMelCollate(1)
 
     # Encode text
-    text_ids = torch.LongTensor(text_to_sequence_mellotron(text, hparams.text_cleaners, arpabet_dict), device=device)
-
+    text_ids = torch.tensor(
+        text_to_sequence_mellotron(text, hparams.text_cleaners, arpabet_dict), dtype=torch.long, device=device
+    )
     # Encode acoustic features
     # Extract acoustic features from reference audio if provided
     if reference_audio_path is not None:
@@ -392,7 +395,7 @@ def _encode_input_mellotron(
         mel_spec = mel_spec.squeeze(0)
         audio = audio.squeeze(0)
     # Compute pitch contour
-    f0 = _get_f0(hparams, audio=audio, mel_spec=mel_spec.cpu().numpy(), device=device)
+    f0 = _get_f0(hparams, audio=audio.cpu().numpy(), mel_spec=mel_spec.cpu().numpy(), device=device)
 
     # Encode speaker ID
     speaker_id = _get_speaker_id(
@@ -403,6 +406,13 @@ def _encode_input_mellotron(
     (text_ids, text_id_lengths, mel_style_input, max_len, output_lengths, speaker_ids, f0s), _ = mellotron.parse_batch(
         data_collate([(text_ids, mel_spec, speaker_id, f0)])
     )
+
+    text_ids = text_ids.to(device)
+    text_id_lengths = text_id_lengths.to(device)
+    mel_style_input = mel_style_input.to(device)
+    output_lengths = output_lengths.to(device)
+    speaker_ids = speaker_ids.to(device)
+    f0s = f0s.to(device)
 
     # Encode GST
     style_input = _get_style_input(
@@ -420,9 +430,15 @@ def _encode_input_mellotron(
         # Generate rhythm data if not available
         if rhythm is None:
             # Use Mellotron's underlying Tacotron 2 model to get the alignment (rhythm)
-            *_, rhythm = mellotron.forward(
-                (text_ids, text_id_lengths, mel_style_input, max_len, output_lengths, speaker_ids, f0s)
-            )
+            *_, rhythm = mellotron.forward((
+                    text_ids.to(device),
+                    text_id_lengths.to(device),
+                    mel_style_input.to(device),
+                    max_len,
+                    output_lengths.to(device),
+                    speaker_ids.to(device),
+                    f0s.to(device)
+            ))
         rhythm = rhythm.permute(1, 0, 2)
 
 
