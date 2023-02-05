@@ -41,6 +41,7 @@ To add the directories to the Python path, you can add these lines to the file `
 
 ```bash
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/src
+export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/src/submodules/
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/submodules/mellotron
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/submodules/mellotron/waveglow
 export PYTHONPATH=$PYTHONPATH:/path/to/tts_mellotron_api/submodules/tacotron2
@@ -63,7 +64,7 @@ from mellotron_api import load_tts, load_vocoder, load_arpabet_dict, synthesise_
 mellotron, mellotron_stft, mellotron_hparams = load_tts('resources/tts/mellotron/mellotron_libritts.pt')
 tacotron2, tacotron2_stft, tacotron2_hparams = load_tts('resources/tts/tacotron_2/tacotron2_statedict.pt', model='tacotron2')
 waveglow, denoiser = load_vocoder('resources/vocoder/waveglow/waveglow_256channels_universal_v4.pt')
-arpabet_dict = load_arpabet_dict('mellotron/data/cmu_dictionary')
+arpabet_dict = load_arpabet_dict('submodules/mellotron/data/cmu_dictionary')
 ```
 
 ### Synthesise with Tacotron 2
