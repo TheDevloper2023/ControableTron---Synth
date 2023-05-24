@@ -89,6 +89,11 @@ synthesise_speech(
 In this API there two available synthesis modalities for Mellotron:
 - with reference audio clip
 - without reference audio clip
+Mellotron uses the referece audio clip to copy the speaking style.
+
+Additionally, Mellotron allows to select the speaker (i.e., change voice).
+You can choose one of the available voices.
+Note that this is a separate feature from the speaking style selection.
 
 #### With reference audio
 
@@ -126,6 +131,32 @@ synthesise_speech(
     tacotron2=tacotron2,
     tacotron2_stft=tacotron2_stft,
     tacotron2_hparams=tacotron2_hparams,
+    out_path='path/to/output.wav'
+)
+```
+
+#### Selecting speaker
+
+It is possible to pass a speaker ID to change the voice uttering the input text.
+You can choose among 123 different speakers with an index $i \in [0, 123) \subseteq \mathbb{N}$
+The quality depends on how often the specific voice was processed by Mellotron during training.
+If the parameter is not specified a random voice is used.
+
+```python
+speaker = 7
+
+synthesise_speech(
+    "I am testing a neural network for speech synthesis.", 
+    mellotron,
+    mellotron_hparams,
+    mellotron_stft,
+    arpabet_dict=arpabet_dict,
+    waveglow=waveglow,
+    denoiser=denoiser,
+    tacotron2=tacotron2,
+    tacotron2_stft=tacotron2_stft,
+    tacotron2_hparams=tacotron2_hparams,
+    speaker_id=speaker,
     out_path='path/to/output.wav'
 )
 ```
