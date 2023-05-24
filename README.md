@@ -55,7 +55,7 @@ Here follows some usage examples of Tacotron 2 and Mellotron.
 
 Start by loading the models.
 Mellotron requires also to load the ARPAbet dictionary.
-Both models can work with and without the Vocoder, in the latter case the [Griffin-Limm algorithm](https://paperswithcode.com/method/griffin-lim-algorithm) is used to generate the raw waveform from the Mel spectrogram.
+Both models can work with and without the Vocoder, in the latter case the [Griffin-Lim algorithm](https://paperswithcode.com/method/griffin-lim-algorithm) is used to generate the raw waveform from the Mel spectrogram.
 
 ```python
 from mellotron_api import load_tts, load_vocoder, load_arpabet_dict, synthesise_speech
