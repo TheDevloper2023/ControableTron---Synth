@@ -394,8 +394,9 @@ def _encode_input_mellotron(
         # Remove dummy batch dimension
         mel_spec = mel_spec.squeeze(0)
         audio = audio.squeeze(0)
+        audio.cpu().numpy()
     # Compute pitch contour
-    f0 = _get_f0(hparams, audio=audio.cpu().numpy(), mel_spec=mel_spec.cpu().numpy(), device=device)
+    f0 = _get_f0(hparams, audio=audio, mel_spec=mel_spec.cpu().numpy(), device=device)
 
     # Encode speaker ID
     speaker_id = _get_speaker_id(
