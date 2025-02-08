@@ -1,5 +1,11 @@
 # Mellotron and Tacotron 2 API
 
+---
+
+This repo adds emotional control to your Tacotron2 models without retraining them by using bert and torchmoji. And it has HiFigan support!
+**Made for the pony prevention project!**
+
+---
 API for [Mellotron](https://github.com/NVIDIA/mellotron) and [Tacotron 2](https://github.com/NVIDIA/tacotron2).
 This repository contains an installation guide and some utility functions to simplify the access to the models in the repositories.
 All credits go to the original developers.
